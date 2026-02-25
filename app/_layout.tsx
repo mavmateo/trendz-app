@@ -9,6 +9,8 @@ import { tokenCache } from "@/lib/clerk";
 import { trpc, trpcClient } from "@/lib/trpc";
 import { AuthProvider } from "@/providers/AuthProvider";
 import { BookmarkProvider } from "@/providers/BookmarkProvider";
+import { LikesProvider } from "@/providers/LikesProvider";
+import { CommentsProvider } from "@/providers/CommentsProvider";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -62,8 +64,12 @@ export default function RootLayout() {
             <GestureHandlerRootView style={{ flex: 1 }}>
               <AuthProvider>
                 <BookmarkProvider>
-                  <StatusBar style="light" />
-                  <RootLayoutNav />
+                  <LikesProvider>
+                    <CommentsProvider>
+                      <StatusBar style="light" />
+                      <RootLayoutNav />
+                    </CommentsProvider>
+                  </LikesProvider>
                 </BookmarkProvider>
               </AuthProvider>
             </GestureHandlerRootView>

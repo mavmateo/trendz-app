@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useEffect } from "react";
+import React, { useCallback, useRef, useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -15,7 +15,11 @@ import { useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
 import { NewsArticle } from "@/types/news";
 import { useBookmarks } from "@/providers/BookmarkProvider";
+import { useLikes } from "@/providers/LikesProvider";
+import { useComments } from "@/providers/CommentsProvider";
 import { formatNumber } from "@/mocks/news";
+import { shareArticle } from "@/lib/share";
+import CommentSection from "@/components/CommentSection";
 import Colors from "@/constants/colors";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
@@ -28,12 +32,17 @@ interface NewsCardProps {
 function NewsCard({ article, isActive }: NewsCardProps) {
   const router = useRouter();
   const { toggleBookmark, isBookmarked } = useBookmarks();
+  const { toggleLike, isLiked, getLikeCount } = useLikes();
+  const { getCommentCount } = useComments();
   const bookmarked = isBookmarked(article.id);
+  const liked = isLiked(article.id);
+  const [commentsVisible, setCommentsVisible] = useState<boolean>(false);
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(30)).current;
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const bookmarkScale = useRef(new Animated.Value(1)).current;
+  const likeScale = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
     if (isActive) {
@@ -72,6 +81,35 @@ function NewsCard({ article, isActive }: NewsCardProps) {
     ]).start();
     toggleBookmark(article.id);
   }, [article.id, toggleBookmark, bookmarkScale]);
+
+  const handleLike = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    Animated.sequence([
+      Animated.timing(likeScale, {
+        toValue: 1.4,
+        duration: 120,
+        useNativeDriver: true,
+      }),
+      Animated.timing(likeScale, {
+        toValue: 1,
+        duration: 120,
+        useNativeDriver: true,
+      }),
+    ]).start();
+    toggleLike(article.id, article.likes);
+  }, [article.id, article.likes, toggleLike, likeScale]);
+
+  const handleOpenComments = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setCommentsVisible(true);
+  }, []);
+
+  const handleShare = useCallback(() => {
+    shareArticle({
+      title: article.title,
+      message: `${article.title}\n\n${article.summary}`,
+    });
+  }, [article.title, article.summary]);
 
   const handleReadMore = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -142,17 +180,42 @@ function NewsCard({ article, isActive }: NewsCardProps) {
           </TouchableOpacity>
         </Animated.View>
 
-        <TouchableOpacity style={styles.actionButton} activeOpacity={0.7}>
-          <Heart size={26} color="#fff" />
-          <Text style={styles.actionCount}>{formatNumber(article.likes)}</Text>
-        </TouchableOpacity>
+        <Animated.View style={{ transform: [{ scale: likeScale }] }}>
+          <TouchableOpacity
+            onPress={handleLike}
+            style={styles.actionButton}
+            testID="like-button"
+            activeOpacity={0.7}
+          >
+            <Heart
+              size={26}
+              color={liked ? "#FF4B6E" : "#fff"}
+              fill={liked ? "#FF4B6E" : "none"}
+            />
+            <Text style={styles.actionCount}>
+              {formatNumber(getLikeCount(article.id, article.likes))}
+            </Text>
+          </TouchableOpacity>
+        </Animated.View>
 
-        <TouchableOpacity style={styles.actionButton} activeOpacity={0.7}>
+        <TouchableOpacity
+          onPress={handleOpenComments}
+          style={styles.actionButton}
+          testID="comment-button"
+          activeOpacity={0.7}
+        >
           <MessageCircle size={26} color="#fff" />
-          <Text style={styles.actionCount}>{formatNumber(article.comments)}</Text>
+          <Text style={styles.actionCount}>
+            {formatNumber(getCommentCount(article.id, article.comments))}
+          </Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.actionButton} activeOpacity={0.7}>
+        <TouchableOpacity
+          onPress={handleShare}
+          style={styles.actionButton}
+          testID="share-button"
+          activeOpacity={0.7}
+        >
           <Share2 size={26} color="#fff" />
           <Text style={styles.actionCount}>{formatNumber(article.shares)}</Text>
         </TouchableOpacity>
@@ -202,6 +265,13 @@ function NewsCard({ article, isActive }: NewsCardProps) {
           ))}
         </View>
       </Animated.View>
+
+      <CommentSection
+        articleId={article.id}
+        baseCommentCount={article.comments}
+        visible={commentsVisible}
+        onClose={() => setCommentsVisible(false)}
+      />
     </View>
   );
 }

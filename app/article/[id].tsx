@@ -1,4 +1,4 @@
-import React, { useCallback, useRef } from "react";
+import React, { useCallback, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -19,6 +19,10 @@ import * as Haptics from "expo-haptics";
 import { useArticle } from "@/hooks/useNews";
 import { formatNumber } from "@/mocks/news";
 import { useBookmarks } from "@/providers/BookmarkProvider";
+import { useLikes } from "@/providers/LikesProvider";
+import { useComments } from "@/providers/CommentsProvider";
+import { shareArticle } from "@/lib/share";
+import CommentSection from "@/components/CommentSection";
 import Colors from "@/constants/colors";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
@@ -29,17 +33,40 @@ export default function ArticleDetailScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { toggleBookmark, isBookmarked } = useBookmarks();
+  const { toggleLike, isLiked, getLikeCount } = useLikes();
+  const { getCommentCount } = useComments();
   const scrollY = useRef(new Animated.Value(0)).current;
+  const [commentsVisible, setCommentsVisible] = useState<boolean>(false);
 
   const { data: article, isLoading } = useArticle(id ?? "");
 
   const bookmarked = article ? isBookmarked(article.id) : false;
+  const liked = article ? isLiked(article.id) : false;
 
   const handleBookmark = useCallback(() => {
     if (!article) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     toggleBookmark(article.id);
   }, [article, toggleBookmark]);
+
+  const handleLike = useCallback(() => {
+    if (!article) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    toggleLike(article.id, article.likes);
+  }, [article, toggleLike]);
+
+  const handleShare = useCallback(() => {
+    if (!article) return;
+    shareArticle({
+      title: article.title,
+      message: `${article.title}\n\n${article.summary}`,
+    });
+  }, [article]);
+
+  const handleOpenComments = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setCommentsVisible(true);
+  }, []);
 
   const getCategoryColor = (category: string) => {
     const map: Record<string, string> = {
@@ -119,7 +146,7 @@ export default function ArticleDetailScreen() {
               fill={bookmarked ? Colors.dark.accent : "none"}
             />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.actionCircle} activeOpacity={0.7}>
+          <TouchableOpacity onPress={handleShare} style={styles.actionCircle} activeOpacity={0.7}>
             <Share2 size={20} color="#fff" />
           </TouchableOpacity>
         </View>
@@ -176,18 +203,26 @@ export default function ArticleDetailScreen() {
           </View>
 
           <View style={styles.statsBar}>
-            <View style={styles.statItem}>
-              <Heart size={16} color={Colors.dark.accent} />
-              <Text style={styles.statText}>{formatNumber(article.likes)}</Text>
-            </View>
-            <View style={styles.statItem}>
+            <TouchableOpacity onPress={handleLike} style={styles.statItem} activeOpacity={0.7}>
+              <Heart
+                size={16}
+                color={liked ? "#FF4B6E" : Colors.dark.accent}
+                fill={liked ? "#FF4B6E" : "none"}
+              />
+              <Text style={styles.statText}>
+                {formatNumber(getLikeCount(article.id, article.likes))}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={handleOpenComments} style={styles.statItem} activeOpacity={0.7}>
               <MessageCircle size={16} color={Colors.dark.textMuted} />
-              <Text style={styles.statText}>{formatNumber(article.comments)}</Text>
-            </View>
-            <View style={styles.statItem}>
+              <Text style={styles.statText}>
+                {formatNumber(getCommentCount(article.id, article.comments))}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={handleShare} style={styles.statItem} activeOpacity={0.7}>
               <Share2 size={16} color={Colors.dark.textMuted} />
               <Text style={styles.statText}>{formatNumber(article.shares)}</Text>
-            </View>
+            </TouchableOpacity>
           </View>
 
           <View style={styles.divider} />
@@ -214,6 +249,13 @@ export default function ArticleDetailScreen() {
           <View style={{ height: 60 + insets.bottom }} />
         </View>
       </Animated.ScrollView>
+
+      <CommentSection
+        articleId={article.id}
+        baseCommentCount={article.comments}
+        visible={commentsVisible}
+        onClose={() => setCommentsVisible(false)}
+      />
     </View>
   );
 }
