@@ -16,10 +16,10 @@ SplashScreen.preventAutoHideAsync();
 
 const queryClient = new QueryClient();
 
-const clerkPublishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY ?? "";
+const clerkPublishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY;
 
 if (!clerkPublishableKey) {
-  console.warn("[Clerk] Missing EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY");
+  console.warn("[Clerk] Missing EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY - auth will be disabled");
 }
 
 function RootLayoutNav() {
@@ -56,25 +56,33 @@ export default function RootLayout() {
     SplashScreen.hideAsync();
   }, []);
 
+  const appContent = (
+    <trpc.Provider client={trpcClient} queryClient={queryClient}>
+      <QueryClientProvider client={queryClient}>
+        <GestureHandlerRootView style={{ flex: 1 }}>
+          <AuthProvider>
+            <BookmarkProvider>
+              <LikesProvider>
+                <CommentsProvider>
+                  <StatusBar style="light" />
+                  <RootLayoutNav />
+                </CommentsProvider>
+              </LikesProvider>
+            </BookmarkProvider>
+          </AuthProvider>
+        </GestureHandlerRootView>
+      </QueryClientProvider>
+    </trpc.Provider>
+  );
+
+  if (!clerkPublishableKey) {
+    return appContent;
+  }
+
   return (
     <ClerkProvider publishableKey={clerkPublishableKey} tokenCache={tokenCache}>
       <ClerkLoaded>
-        <trpc.Provider client={trpcClient} queryClient={queryClient}>
-          <QueryClientProvider client={queryClient}>
-            <GestureHandlerRootView style={{ flex: 1 }}>
-              <AuthProvider>
-                <BookmarkProvider>
-                  <LikesProvider>
-                    <CommentsProvider>
-                      <StatusBar style="light" />
-                      <RootLayoutNav />
-                    </CommentsProvider>
-                  </LikesProvider>
-                </BookmarkProvider>
-              </AuthProvider>
-            </GestureHandlerRootView>
-          </QueryClientProvider>
-        </trpc.Provider>
+        {appContent}
       </ClerkLoaded>
     </ClerkProvider>
   );
