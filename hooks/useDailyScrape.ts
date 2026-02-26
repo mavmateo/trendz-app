@@ -1,10 +1,13 @@
-import { useEffect, useRef } from "react";
-import { AppState, AppStateStatus } from "react-native";
+import { useEffect, useRef, useCallback } from "react";
+import { AppState, AppStateStatus, Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useQueryClient } from "@tanstack/react-query";
 
 const LAST_SCRAPE_KEY = "trendz_last_scrape_date";
 const SCRAPE_HOUR_UTC = 6;
+const SCRAPE_TIMEOUT_MS = 120000;
+const MAX_RETRIES = 2;
+const RETRY_DELAY_MS = 5000;
 
 function getTodayScrapeKey(): string {
   const now = new Date();
@@ -34,24 +37,59 @@ async function markScrapedToday(): Promise<void> {
   }
 }
 
-async function triggerScrape(baseUrl: string): Promise<boolean> {
+function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number): Promise<Response> {
+  return new Promise((resolve, reject) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      controller.abort();
+      reject(new Error(`Request timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    fetch(url, { ...options, signal: controller.signal })
+      .then((res) => {
+        clearTimeout(timer);
+        resolve(res);
+      })
+      .catch((err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+  });
+}
+
+async function triggerScrape(baseUrl: string, attempt: number = 1): Promise<boolean> {
   try {
-    console.log("[DailyScrape] Triggering daily scrape...");
-    const res = await fetch(`${baseUrl}/api/cron/scrape`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-    });
+    console.log(`[DailyScrape] Triggering daily scrape (attempt ${attempt})...`);
+    console.log(`[DailyScrape] URL: ${baseUrl}/api/cron/scrape`);
+
+    const res = await fetchWithTimeout(
+      `${baseUrl}/api/cron/scrape`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      },
+      SCRAPE_TIMEOUT_MS
+    );
 
     if (!res.ok) {
-      console.error("[DailyScrape] Scrape failed:", res.status);
+      const body = await res.text().catch(() => "(no body)");
+      console.error(`[DailyScrape] Scrape failed: ${res.status} - ${body}`);
       return false;
     }
 
     const result = await res.json();
     console.log("[DailyScrape] Scrape result:", JSON.stringify(result));
     return true;
-  } catch (error) {
-    console.error("[DailyScrape] Error triggering scrape:", error);
+  } catch (error: any) {
+    console.error(`[DailyScrape] Error on attempt ${attempt}:`, error?.message || error);
+
+    if (attempt < MAX_RETRIES) {
+      console.log(`[DailyScrape] Retrying in ${RETRY_DELAY_MS / 1000}s...`);
+      await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
+      return triggerScrape(baseUrl, attempt + 1);
+    }
+
+    console.error("[DailyScrape] All retry attempts exhausted");
     return false;
   }
 }
@@ -60,7 +98,7 @@ export function useDailyScrape() {
   const queryClient = useQueryClient();
   const isCheckingRef = useRef(false);
 
-  const checkAndScrape = async () => {
+  const checkAndScrape = useCallback(async () => {
     if (isCheckingRef.current) return;
     isCheckingRef.current = true;
 
@@ -82,6 +120,9 @@ export function useDailyScrape() {
         return;
       }
 
+      console.log(`[DailyScrape] Base URL: ${baseUrl}`);
+      console.log(`[DailyScrape] Platform: ${Platform.OS}`);
+
       const success = await triggerScrape(baseUrl);
       if (success) {
         await markScrapedToday();
@@ -94,16 +135,16 @@ export function useDailyScrape() {
     } finally {
       isCheckingRef.current = false;
     }
-  };
+  }, [queryClient]);
 
   useEffect(() => {
     const timeout = setTimeout(() => {
       checkAndScrape();
-    }, 3000);
+    }, 5000);
 
     const subscription = AppState.addEventListener("change", (state: AppStateStatus) => {
       if (state === "active") {
-        checkAndScrape();
+        setTimeout(() => checkAndScrape(), 2000);
       }
     });
 
@@ -111,5 +152,5 @@ export function useDailyScrape() {
       clearTimeout(timeout);
       subscription.remove();
     };
-  }, []);
+  }, [checkAndScrape]);
 }
