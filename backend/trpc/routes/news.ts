@@ -195,6 +195,40 @@ export const newsRouter = createTRPCRouter({
       return { inserted: result.length, message: `Scraped ${result.length} from ${source.name}` };
     }),
 
+  triggerDailyScrape: publicProcedure.mutation(async () => {
+    console.log("[Scraper] Triggering daily scrape via tRPC...");
+    const baseUrl = process.env.EXPO_PUBLIC_RORK_API_BASE_URL ?? "";
+    if (!baseUrl) {
+      throw new Error("API base URL not configured");
+    }
+
+    const res = await fetch(`${baseUrl}/api/cron/scrape`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Cron scrape failed: ${res.status} ${text}`);
+    }
+
+    return res.json();
+  }),
+
+  getLastScrapeTime: publicProcedure.query(async () => {
+    try {
+      const data = await supabaseAdmin(
+        "articles?select=created_at&order=created_at.desc&limit=1"
+      );
+      if (data && data.length > 0) {
+        return { lastScrape: data[0].created_at };
+      }
+      return { lastScrape: null };
+    } catch {
+      return { lastScrape: null };
+    }
+  }),
+
   getSources: publicProcedure.query(() => {
     return GHANA_RSS_SOURCES.map((s) => ({
       name: s.name,

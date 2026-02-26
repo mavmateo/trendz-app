@@ -1,4 +1,4 @@
-import React, { useCallback } from "react";
+import React, { useCallback, useState } from "react";
 import {
   View,
   Text,
@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   ScrollView,
   ActivityIndicator,
+  Alert,
 } from "react-native";
 import { Image } from "expo-image";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -19,8 +20,10 @@ import {
   ChevronRight,
   Newspaper,
   Zap,
+  RefreshCw,
 } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
+import { useQueryClient } from "@tanstack/react-query";
 import { useAuthContext } from "@/providers/AuthProvider";
 import { useBookmarks } from "@/providers/BookmarkProvider";
 import Colors from "@/constants/colors";
@@ -30,6 +33,37 @@ export default function ProfileScreen() {
   const router = useRouter();
   const { isSignedIn, isLoaded, userName, userEmail, userAvatar, signOut } = useAuthContext();
   const { bookmarkedIds } = useBookmarks();
+  const queryClient = useQueryClient();
+  const [isScraping, setIsScraping] = useState<boolean>(false);
+
+  const handleRefreshNews = useCallback(async () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setIsScraping(true);
+    try {
+      const baseUrl = process.env.EXPO_PUBLIC_RORK_API_BASE_URL;
+      if (!baseUrl) {
+        Alert.alert("Error", "API not configured");
+        return;
+      }
+      const res = await fetch(`${baseUrl}/api/cron/scrape`, { method: "POST" });
+      const result = await res.json();
+      if (result.success) {
+        queryClient.invalidateQueries({ queryKey: ["articles"] });
+        queryClient.invalidateQueries({ queryKey: ["trending"] });
+        Alert.alert(
+          "News Updated",
+          `Fetched ${result.rssArticles} RSS + ${result.aiArticles} AI articles. ${result.totalInserted} inserted.`
+        );
+      } else {
+        Alert.alert("Error", "Failed to refresh news");
+      }
+    } catch (error) {
+      console.error("[Profile] Scrape error:", error);
+      Alert.alert("Error", "Could not refresh news. Try again later.");
+    } finally {
+      setIsScraping(false);
+    }
+  }, [queryClient]);
 
   const handleSignOut = useCallback(async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -132,6 +166,22 @@ export default function ProfileScreen() {
             </TouchableOpacity>
           ))}
         </View>
+
+        <TouchableOpacity
+          onPress={handleRefreshNews}
+          style={styles.refreshBtn}
+          activeOpacity={0.7}
+          disabled={isScraping}
+        >
+          {isScraping ? (
+            <ActivityIndicator size="small" color={Colors.dark.accent} />
+          ) : (
+            <RefreshCw size={20} color={Colors.dark.accent} />
+          )}
+          <Text style={styles.refreshText}>
+            {isScraping ? "Fetching Latest News..." : "Refresh News Feed"}
+          </Text>
+        </TouchableOpacity>
 
         <TouchableOpacity
           onPress={handleSignOut}
@@ -271,6 +321,24 @@ const styles = StyleSheet.create({
   },
   signOutText: {
     color: "#CE1126",
+    fontSize: 16,
+    fontWeight: "600" as const,
+  },
+  refreshBtn: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    justifyContent: "center" as const,
+    marginHorizontal: 20,
+    marginBottom: 12,
+    paddingVertical: 16,
+    borderRadius: 14,
+    backgroundColor: "rgba(252, 185, 0, 0.1)",
+    gap: 10,
+    borderWidth: 1,
+    borderColor: "rgba(252, 185, 0, 0.2)",
+  },
+  refreshText: {
+    color: Colors.dark.accent,
     fontSize: 16,
     fontWeight: "600" as const,
   },

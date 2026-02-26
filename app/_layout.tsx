@@ -11,6 +11,7 @@ import { AuthProvider } from "@/providers/AuthProvider";
 import { BookmarkProvider } from "@/providers/BookmarkProvider";
 import { LikesProvider } from "@/providers/LikesProvider";
 import { CommentsProvider } from "@/providers/CommentsProvider";
+import { useDailyScrape } from "@/hooks/useDailyScrape";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -20,6 +21,11 @@ const clerkPublishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY;
 
 if (!clerkPublishableKey) {
   console.warn("[Clerk] Missing EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY - auth will be disabled");
+}
+
+function DailyScrapeRunner({ children }: { children: React.ReactNode }) {
+  useDailyScrape();
+  return <>{children}</>;
 }
 
 function RootLayoutNav() {
@@ -64,8 +70,10 @@ export default function RootLayout() {
             <BookmarkProvider>
               <LikesProvider>
                 <CommentsProvider>
-                  <StatusBar style="light" />
-                  <RootLayoutNav />
+                  <DailyScrapeRunner>
+                    <StatusBar style="light" />
+                    <RootLayoutNav />
+                  </DailyScrapeRunner>
                 </CommentsProvider>
               </LikesProvider>
             </BookmarkProvider>
