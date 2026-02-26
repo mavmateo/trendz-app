@@ -89,7 +89,7 @@ async function scrapeRssFeed(source: { name: string; url: string; category: stri
   try {
     console.log(`[Scraper] Fetching RSS from ${source.name}: ${source.url}`);
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
+    const timeout = setTimeout(() => controller.abort(), 8000);
 
     const res = await fetch(source.url, {
       signal: controller.signal,
@@ -208,13 +208,17 @@ export const newsRouter = createTRPCRouter({
 
     const allArticles: any[] = [];
 
-    for (const source of GHANA_RSS_SOURCES) {
-      try {
-        const articles = await scrapeRssFeed(source);
-        allArticles.push(...articles);
-        results.rssArticles += articles.length;
-      } catch (error) {
-        const msg = `RSS error (${source.name}): ${error}`;
+    const rssResults = await Promise.allSettled(
+      GHANA_RSS_SOURCES.map((source) => scrapeRssFeed(source))
+    );
+
+    for (let i = 0; i < rssResults.length; i++) {
+      const result = rssResults[i];
+      if (result.status === "fulfilled") {
+        allArticles.push(...result.value);
+        results.rssArticles += result.value.length;
+      } else {
+        const msg = `RSS error (${GHANA_RSS_SOURCES[i].name}): ${result.reason}`;
         console.error(`[Scraper] ${msg}`);
         results.errors.push(msg);
       }
