@@ -3,34 +3,24 @@ import { AppState, AppStateStatus } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useQueryClient } from "@tanstack/react-query";
 
-const LAST_SCRAPE_KEY = "trendz_last_scrape_date";
-const SCRAPE_HOUR_UTC = 6;
+const LAST_SCRAPE_KEY = "trendz_last_scrape_timestamp";
+const SCRAPE_INTERVAL_MS = 60 * 60 * 1000;
+const HOURLY_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 
-function getTodayScrapeKey(): string {
-  const now = new Date();
-  return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}-${String(now.getUTCDate()).padStart(2, "0")}`;
-}
-
-function shouldScrapeNow(): boolean {
-  const now = new Date();
-  return now.getUTCHours() >= SCRAPE_HOUR_UTC;
-}
-
-async function hasScrapedToday(): Promise<boolean> {
+async function getLastScrapeTime(): Promise<number> {
   try {
-    const lastScrape = await AsyncStorage.getItem(LAST_SCRAPE_KEY);
-    const todayKey = getTodayScrapeKey();
-    return lastScrape === todayKey;
+    const stored = await AsyncStorage.getItem(LAST_SCRAPE_KEY);
+    return stored ? parseInt(stored, 10) : 0;
   } catch {
-    return false;
+    return 0;
   }
 }
 
-async function markScrapedToday(): Promise<void> {
+async function markScrapedNow(): Promise<void> {
   try {
-    await AsyncStorage.setItem(LAST_SCRAPE_KEY, getTodayScrapeKey());
+    await AsyncStorage.setItem(LAST_SCRAPE_KEY, Date.now().toString());
   } catch (error) {
-    console.error("[DailyScrape] Error saving scrape date:", error);
+    console.error("[HourlyScrape] Error saving scrape timestamp:", error);
   }
 }
 
@@ -41,33 +31,31 @@ function getApiBaseUrl(): string {
 export function useDailyScrape() {
   const queryClient = useQueryClient();
   const isCheckingRef = useRef(false);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const checkAndScrape = useCallback(async () => {
     if (isCheckingRef.current) return;
     isCheckingRef.current = true;
 
     try {
-      const alreadyScraped = await hasScrapedToday();
-      if (alreadyScraped) {
-        console.log("[DailyScrape] Already scraped today, skipping");
-        isCheckingRef.current = false;
-        return;
-      }
+      const lastScrape = await getLastScrapeTime();
+      const elapsed = Date.now() - lastScrape;
 
-      if (!shouldScrapeNow()) {
-        console.log("[DailyScrape] Not yet 6am UTC, skipping");
+      if (elapsed < SCRAPE_INTERVAL_MS) {
+        const minutesLeft = Math.round((SCRAPE_INTERVAL_MS - elapsed) / 60000);
+        console.log(`[HourlyScrape] Last scrape was ${Math.round(elapsed / 60000)}m ago, next in ~${minutesLeft}m`);
         isCheckingRef.current = false;
         return;
       }
 
       const baseUrl = getApiBaseUrl();
       if (!baseUrl) {
-        console.warn("[DailyScrape] No API base URL configured, skipping");
+        console.warn("[HourlyScrape] No API base URL configured, skipping");
         isCheckingRef.current = false;
         return;
       }
 
-      console.log("[DailyScrape] Triggering daily scrape via cron endpoint...");
+      console.log("[HourlyScrape] Triggering hourly scrape via cron endpoint...");
 
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 120000);
@@ -81,36 +69,41 @@ export function useDailyScrape() {
 
         if (res.ok) {
           const data = await res.json();
-          console.log("[DailyScrape] Scrape result:", JSON.stringify(data));
-          await markScrapedToday();
+          console.log("[HourlyScrape] Scrape result:", JSON.stringify(data));
+          await markScrapedNow();
           queryClient.invalidateQueries({ queryKey: ["articles"] });
           queryClient.invalidateQueries({ queryKey: ["trending"] });
-          console.log("[DailyScrape] Scrape completed and cache invalidated");
+          console.log("[HourlyScrape] Scrape completed and cache invalidated");
         } else {
           const text = await res.text();
-          console.error("[DailyScrape] Scrape failed:", res.status, text);
+          console.error("[HourlyScrape] Scrape failed:", res.status, text);
         }
       } catch (fetchError: any) {
         clearTimeout(timeout);
         if (fetchError.name === "AbortError") {
-          console.log("[DailyScrape] Request timed out, marking as done to avoid retries");
-          await markScrapedToday();
+          console.log("[HourlyScrape] Request timed out, marking as done to avoid retries");
+          await markScrapedNow();
           queryClient.invalidateQueries({ queryKey: ["articles"] });
         } else {
-          console.error("[DailyScrape] Fetch error:", fetchError.message);
+          console.error("[HourlyScrape] Fetch error:", fetchError.message);
         }
       }
     } catch (error) {
-      console.error("[DailyScrape] Check error:", error);
+      console.error("[HourlyScrape] Check error:", error);
     } finally {
       isCheckingRef.current = false;
     }
   }, [queryClient]);
 
   useEffect(() => {
-    const timeout = setTimeout(() => {
+    const initialTimeout = setTimeout(() => {
       checkAndScrape();
     }, 5000);
+
+    intervalRef.current = setInterval(() => {
+      console.log("[HourlyScrape] Periodic check triggered");
+      checkAndScrape();
+    }, HOURLY_CHECK_INTERVAL_MS);
 
     const subscription = AppState.addEventListener("change", (state: AppStateStatus) => {
       if (state === "active") {
@@ -119,7 +112,10 @@ export function useDailyScrape() {
     });
 
     return () => {
-      clearTimeout(timeout);
+      clearTimeout(initialTimeout);
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
       subscription.remove();
     };
   }, [checkAndScrape]);
