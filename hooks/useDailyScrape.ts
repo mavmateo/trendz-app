@@ -2,7 +2,6 @@ import { useEffect, useRef, useCallback } from "react";
 import { AppState, AppStateStatus } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useQueryClient } from "@tanstack/react-query";
-import { trpc } from "@/lib/trpc";
 
 const LAST_SCRAPE_KEY = "trendz_last_scrape_date";
 const SCRAPE_HOUR_UTC = 6;
@@ -35,29 +34,16 @@ async function markScrapedToday(): Promise<void> {
   }
 }
 
+function getApiBaseUrl(): string {
+  return process.env.EXPO_PUBLIC_RORK_API_BASE_URL ?? "";
+}
+
 export function useDailyScrape() {
   const queryClient = useQueryClient();
   const isCheckingRef = useRef(false);
 
-  const scrapeMutation = trpc.news.triggerDailyScrape.useMutation({
-    onSuccess: async (data) => {
-      console.log("[DailyScrape] Scrape result:", JSON.stringify(data));
-      await markScrapedToday();
-      queryClient.invalidateQueries({ queryKey: ["articles"] });
-      queryClient.invalidateQueries({ queryKey: ["trending"] });
-      console.log("[DailyScrape] Scrape completed and cache invalidated");
-    },
-    onError: (error) => {
-      console.error("[DailyScrape] Scrape mutation error:", error.message);
-    },
-    onSettled: () => {
-      isCheckingRef.current = false;
-    },
-  });
-
   const checkAndScrape = useCallback(async () => {
     if (isCheckingRef.current) return;
-    if (scrapeMutation.isPending) return;
     isCheckingRef.current = true;
 
     try {
@@ -74,13 +60,52 @@ export function useDailyScrape() {
         return;
       }
 
-      console.log("[DailyScrape] Triggering daily scrape via tRPC...");
-      scrapeMutation.mutate();
+      const baseUrl = getApiBaseUrl();
+      if (!baseUrl) {
+        console.warn("[DailyScrape] No API base URL configured, skipping");
+        isCheckingRef.current = false;
+        return;
+      }
+
+      console.log("[DailyScrape] Triggering daily scrape via cron endpoint...");
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 120000);
+
+      try {
+        const res = await fetch(`${baseUrl}/api/cron/scrape`, {
+          method: "POST",
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+
+        if (res.ok) {
+          const data = await res.json();
+          console.log("[DailyScrape] Scrape result:", JSON.stringify(data));
+          await markScrapedToday();
+          queryClient.invalidateQueries({ queryKey: ["articles"] });
+          queryClient.invalidateQueries({ queryKey: ["trending"] });
+          console.log("[DailyScrape] Scrape completed and cache invalidated");
+        } else {
+          const text = await res.text();
+          console.error("[DailyScrape] Scrape failed:", res.status, text);
+        }
+      } catch (fetchError: any) {
+        clearTimeout(timeout);
+        if (fetchError.name === "AbortError") {
+          console.log("[DailyScrape] Request timed out, marking as done to avoid retries");
+          await markScrapedToday();
+          queryClient.invalidateQueries({ queryKey: ["articles"] });
+        } else {
+          console.error("[DailyScrape] Fetch error:", fetchError.message);
+        }
+      }
     } catch (error) {
       console.error("[DailyScrape] Check error:", error);
+    } finally {
       isCheckingRef.current = false;
     }
-  }, [scrapeMutation]);
+  }, [queryClient]);
 
   useEffect(() => {
     const timeout = setTimeout(() => {
