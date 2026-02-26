@@ -196,23 +196,48 @@ export const newsRouter = createTRPCRouter({
     }),
 
   triggerDailyScrape: publicProcedure.mutation(async () => {
-    console.log("[Scraper] Triggering daily scrape via tRPC...");
-    const baseUrl = process.env.EXPO_PUBLIC_RORK_API_BASE_URL ?? "";
-    if (!baseUrl) {
-      throw new Error("API base URL not configured");
+    console.log("[Scraper] Triggering daily scrape directly via tRPC...");
+
+    const results = {
+      rssArticles: 0,
+      aiArticles: 0,
+      totalInserted: 0,
+      errors: [] as string[],
+      timestamp: new Date().toISOString(),
+    };
+
+    const allArticles: any[] = [];
+
+    for (const source of GHANA_RSS_SOURCES) {
+      try {
+        const articles = await scrapeRssFeed(source);
+        allArticles.push(...articles);
+        results.rssArticles += articles.length;
+      } catch (error) {
+        const msg = `RSS error (${source.name}): ${error}`;
+        console.error(`[Scraper] ${msg}`);
+        results.errors.push(msg);
+      }
     }
 
-    const res = await fetch(`${baseUrl}/api/cron/scrape`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-    });
-
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`Cron scrape failed: ${res.status} ${text}`);
+    if (allArticles.length > 0) {
+      try {
+        const inserted = await supabaseAdmin("articles", {
+          method: "POST",
+          headers: { Prefer: "return=representation,resolution=merge-duplicates" } as any,
+          body: JSON.stringify(allArticles),
+        });
+        results.totalInserted = inserted.length;
+        console.log(`[Scraper] Inserted ${inserted.length} articles`);
+      } catch (error) {
+        const msg = `Insert error: ${error}`;
+        console.error(`[Scraper] ${msg}`);
+        results.errors.push(msg);
+      }
     }
 
-    return res.json();
+    console.log(`[Scraper] Daily scrape done. RSS: ${results.rssArticles}, Inserted: ${results.totalInserted}`);
+    return { success: true, ...results };
   }),
 
   getLastScrapeTime: publicProcedure.query(async () => {
