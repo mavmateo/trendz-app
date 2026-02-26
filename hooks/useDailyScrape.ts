@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback } from "react";
 import { AppState, AppStateStatus } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useQueryClient } from "@tanstack/react-query";
+import { trpc } from "@/lib/trpc";
 
 const LAST_SCRAPE_KEY = "trendz_last_scrape_timestamp";
 const SCRAPE_INTERVAL_MS = 60 * 60 * 1000;
@@ -24,14 +25,11 @@ async function markScrapedNow(): Promise<void> {
   }
 }
 
-function getApiBaseUrl(): string {
-  return process.env.EXPO_PUBLIC_RORK_API_BASE_URL ?? "";
-}
-
 export function useDailyScrape() {
   const queryClient = useQueryClient();
   const isCheckingRef = useRef(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const triggerScrape = trpc.news.triggerDailyScrape.useMutation();
 
   const checkAndScrape = useCallback(async () => {
     if (isCheckingRef.current) return;
@@ -48,52 +46,24 @@ export function useDailyScrape() {
         return;
       }
 
-      const baseUrl = getApiBaseUrl();
-      if (!baseUrl) {
-        console.warn("[HourlyScrape] No API base URL configured, skipping");
-        isCheckingRef.current = false;
-        return;
-      }
-
-      console.log("[HourlyScrape] Triggering hourly scrape via cron endpoint...");
-
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 120000);
+      console.log("[HourlyScrape] Triggering hourly scrape via tRPC...");
 
       try {
-        const res = await fetch(`${baseUrl}/api/cron/scrape`, {
-          method: "POST",
-          signal: controller.signal,
-        });
-        clearTimeout(timeout);
-
-        if (res.ok) {
-          const data = await res.json();
-          console.log("[HourlyScrape] Scrape result:", JSON.stringify(data));
-          await markScrapedNow();
-          queryClient.invalidateQueries({ queryKey: ["articles"] });
-          queryClient.invalidateQueries({ queryKey: ["trending"] });
-          console.log("[HourlyScrape] Scrape completed and cache invalidated");
-        } else {
-          const text = await res.text();
-          console.error("[HourlyScrape] Scrape failed:", res.status, text);
-        }
-      } catch (fetchError: any) {
-        clearTimeout(timeout);
-        if (fetchError.name === "AbortError") {
-          console.log("[HourlyScrape] Request timed out, marking as done to avoid retries");
-          await markScrapedNow();
-          queryClient.invalidateQueries({ queryKey: ["articles"] });
-        } else {
-          console.error("[HourlyScrape] Fetch error:", fetchError.message);
-        }
+        const result = await triggerScrape.mutateAsync();
+        console.log("[HourlyScrape] Scrape result:", JSON.stringify(result));
+        await markScrapedNow();
+        queryClient.invalidateQueries({ queryKey: ["articles"] });
+        queryClient.invalidateQueries({ queryKey: ["trending"] });
+        console.log("[HourlyScrape] Scrape completed and cache invalidated");
+      } catch (mutationError: any) {
+        console.warn("[HourlyScrape] Scrape request failed, will retry later:", mutationError?.message ?? "Unknown error");
       }
     } catch (error) {
-      console.error("[HourlyScrape] Check error:", error);
+      console.warn("[HourlyScrape] Check error:", error);
     } finally {
       isCheckingRef.current = false;
     }
-  }, [queryClient]);
+  }, [queryClient, triggerScrape]);
 
   useEffect(() => {
     const initialTimeout = setTimeout(() => {
