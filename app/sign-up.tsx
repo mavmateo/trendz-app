@@ -54,8 +54,14 @@ export default function SignUpScreen() {
       console.log("[Auth] Verification email sent");
     } catch (err: any) {
       console.error("[Auth] Sign up error:", err);
-      const message = err?.errors?.[0]?.longMessage || err?.errors?.[0]?.message || "Could not create account";
-      setError(message);
+      const errors = err?.errors;
+      if (errors && errors.length > 1) {
+        const messages = errors.map((e: any) => e?.longMessage || e?.message).filter(Boolean);
+        setError(messages.join("\n\n"));
+      } else {
+        const message = errors?.[0]?.longMessage || errors?.[0]?.message || "Could not create account";
+        setError(message);
+      }
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
       setLoading(false);
