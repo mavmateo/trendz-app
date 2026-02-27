@@ -145,12 +145,21 @@ async function scrapeRssFeed(source: { name: string; url: string; category: stri
 
 export const newsRouter = createTRPCRouter({
   scrapeAll: publicProcedure.mutation(async () => {
-    console.log("[Scraper] Starting full scrape of all sources...");
+    console.log("[Scraper] Starting full scrape of all sources (parallel)...");
     const allArticles: any[] = [];
 
-    for (const source of GHANA_RSS_SOURCES) {
-      const articles = await scrapeRssFeed(source);
-      allArticles.push(...articles);
+    const rssResults = await Promise.allSettled(
+      GHANA_RSS_SOURCES.map((source) => scrapeRssFeed(source))
+    );
+
+    for (let i = 0; i < rssResults.length; i++) {
+      const result = rssResults[i];
+      if (result.status === "fulfilled" && result.value.length > 0) {
+        allArticles.push(...result.value);
+        console.log(`[Scraper] ${GHANA_RSS_SOURCES[i].name}: ${result.value.length} articles`);
+      } else if (result.status === "rejected") {
+        console.error(`[Scraper] ${GHANA_RSS_SOURCES[i].name} failed:`, result.reason);
+      }
     }
 
     console.log(`[Scraper] Total articles scraped: ${allArticles.length}`);

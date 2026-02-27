@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef } from "react";
 import { AppState, AppStateStatus } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useQueryClient } from "@tanstack/react-query";
@@ -40,7 +40,7 @@ async function shouldScrapeNow(): Promise<boolean> {
 export function useDailyScrape() {
   const queryClient = useQueryClient();
   const isCheckingRef = useRef(false);
-  const utils = trpc.useUtils();
+  const mutateRef = useRef<(() => void) | null>(null);
 
   const scrapeMutation = trpc.news.scrapeAll.useMutation({
     onSuccess: async (data) => {
@@ -55,28 +55,35 @@ export function useDailyScrape() {
     },
   });
 
-  const checkAndScrape = useCallback(async () => {
-    if (isCheckingRef.current || scrapeMutation.isPending) return;
-    isCheckingRef.current = true;
-
-    try {
-      const due = await shouldScrapeNow();
-      if (!due) {
-        console.log("[HourlyScrape] Not yet due, skipping");
-        return;
-      }
-
-      console.log("[HourlyScrape] Triggering hourly scrape via tRPC...");
+  mutateRef.current = () => {
+    if (!scrapeMutation.isPending) {
       scrapeMutation.mutate();
-    } catch (error) {
-      console.error("[HourlyScrape] Unexpected error:", error);
-    } finally {
-      isCheckingRef.current = false;
     }
-  }, [scrapeMutation]);
+  };
 
   useEffect(() => {
+    const checkAndScrape = async () => {
+      if (isCheckingRef.current) return;
+      isCheckingRef.current = true;
+
+      try {
+        const due = await shouldScrapeNow();
+        if (!due) {
+          console.log("[HourlyScrape] Not yet due, skipping");
+          return;
+        }
+
+        console.log("[HourlyScrape] Triggering hourly scrape via tRPC...");
+        mutateRef.current?.();
+      } catch (error) {
+        console.error("[HourlyScrape] Unexpected error:", error);
+      } finally {
+        isCheckingRef.current = false;
+      }
+    };
+
     const initialTimeout = setTimeout(() => {
+      console.log("[HourlyScrape] Initial check firing");
       checkAndScrape();
     }, 3000);
 
@@ -97,5 +104,5 @@ export function useDailyScrape() {
       clearInterval(hourlyInterval);
       subscription.remove();
     };
-  }, [checkAndScrape]);
+  }, []);
 }
